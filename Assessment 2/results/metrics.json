@@ -1,0 +1,7 @@
+{
+  "agent_avg_wait_sec": 44.625759663615476,
+  "baseline_avg_wait_sec": 49.155528108051925,
+  "agent_final_queue_mean": 1.0,
+  "baseline_final_queue_mean": 2.1,
+  "wait_time_improvement_pct": 9.215176031634273
+}
