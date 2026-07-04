@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AI Adaptive Traffic Light Optimization — Live Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+<style>
+  :root{
+    --bg:#0f1620; --panel:#161f2c; --panel2:#1c2836; --border:#28374a;
+    --text:#e7edf5; --muted:#8ba0b8; --accent:#3ea6ff; --green:#3ecf8e;
+    --red:#ff5c72; --amber:#ffb020;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg); color:var(--text);
+  }
+  header{
+    padding:18px 28px; border-bottom:1px solid var(--border);
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  header h1{font-size:18px; margin:0; font-weight:600;}
+  header .sub{color:var(--muted); font-size:13px; margin-top:2px;}
+  .layout{display:grid; grid-template-columns: 1.1fr 1fr; gap:20px; padding:24px;}
+  @media (max-width:980px){.layout{grid-template-columns:1fr;}}
+  .card{
+    background:var(--panel); border:1px solid var(--border); border-radius:12px;
+    padding:20px;
+  }
+  .card h2{font-size:14px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 16px;}
+  .row{display:flex; gap:10px; flex-wrap:wrap;}
+  button{
+    background:var(--panel2); color:var(--text); border:1px solid var(--border);
+    padding:8px 14px; border-radius:8px; cursor:pointer; font-size:13px;
+  }
+  button.active{background:var(--accent); border-color:var(--accent); color:#04121f; font-weight:600;}
+  button:hover{filter:brightness(1.15);}
+  .intersection{
+    position:relative; width:100%; aspect-ratio:1/1; max-width:420px; margin:0 auto;
+    background:#22303f; border-radius:10px; overflow:hidden;
+  }
+  .road{position:absolute; background:#3a4b5e;}
+  .road.h{top:42%; left:0; width:100%; height:16%;}
+  .road.v{left:42%; top:0; height:100%; width:16%;}
+  .cars-stack{position:absolute; display:flex; gap:3px;}
+  .cars-ns{flex-direction:column-reverse; top:50%; left:50%; transform:translate(-50%, calc(-100% - 47px)); width:20px; align-items:center;}
+  .cars-ew{flex-direction:row-reverse; top:50%; left:50%; transform:translate(47px, -50%); height:20px; align-items:center;}
+  .car-cell{background:var(--accent); border-radius:2px; flex-shrink:0;}
+  .cars-ns .car-cell{width:16px; height:9px;}
+  .cars-ew .car-cell{width:9px; height:16px;}
+  .cars-overflow{color:var(--text); font-size:11px; font-weight:600;}
+  .light{
+    position:absolute; width:14px; height:14px; border-radius:50%;
+    top:50%; left:50%; transform:translate(-50%,-50%);
+  }
+  .light.ns{background:var(--red);} .light.ew{background:var(--red);}
+  .light.on-ns{background:var(--green); box-shadow:0 0 10px var(--green);}
+  .light.on-ew{background:var(--green); box-shadow:0 0 10px var(--green);}
+  .stat-grid{display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:16px;}
+  .stat{background:var(--panel2); border-radius:8px; padding:10px 12px;}
+  .stat .v{font-size:20px; font-weight:700;}
+  .stat .l{font-size:11px; color:var(--muted); text-transform:uppercase;}
+  .badge{display:inline-block; padding:2px 8px; border-radius:6px; font-size:11px; font-weight:600;}
+  .badge.ok{background:rgba(62,207,142,.15); color:var(--green);}
+  .badge.bad{background:rgba(255,92,114,.15); color:var(--red);}
+  .attack-btns button{font-size:12px;}
+  #seclog{max-height:280px; overflow-y:auto; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px;}
+  #seclog .entry{padding:6px 8px; border-bottom:1px solid var(--border);}
+  #seclog .entry-row{display:flex; justify-content:space-between; gap:8px;}
+  #seclog .reason{display:block; margin-top:3px; font-size:11px; color:var(--muted);}
+  #seclog .entry.rej{background:rgba(255,92,114,.06);}
+  #seclog .entry.rej .reason{color:var(--red);}
+  .metric-compare{display:flex; gap:16px; margin-top:10px;}
+  .metric-compare .col{flex:1; text-align:center; background:var(--panel2); border-radius:8px; padding:12px;}
+  .metric-compare .col b{font-size:22px; display:block;}
+  small.muted{color:var(--muted);}
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>AI Adaptive Traffic Light Optimization System</h1>
+    <div class="sub">MSE806 Assessment 2 — live intersection simulation, communication layer &amp; security demo</div>
+  </div>
+  <div class="row">
+    <button id="btn-ai" class="active">AI Controller</button>
+    <button id="btn-fixed">Fixed-Timer Baseline</button>
+    <button id="btn-pause">Pause</button>
+    <button id="btn-reset">Reset</button>
+    <button id="btn-security" class="active">Security: ON</button>
+  </div>
+</header>
+
+<div class="layout">
+
+  <div class="card">
+    <h2>Live Intersection</h2>
+    <div class="intersection" id="intersection">
+      <div class="road h"></div>
+      <div class="road v"></div>
+      <div class="cars-stack cars-ns" id="cars-ns"></div>
+      <div class="cars-stack cars-ew" id="cars-ew"></div>
+      <div class="light ns" id="light-ns" style="margin-top:-40px;"></div>
+      <div class="light ew" id="light-ew" style="margin-left:40px;"></div>
+    </div>
+
+    <div class="stat-grid">
+      <div class="stat"><div class="v" id="s-queue-ns">0</div><div class="l">NS Queue</div></div>
+      <div class="stat"><div class="v" id="s-queue-ew">0</div><div class="l">EW Queue</div></div>
+      <div class="stat"><div class="v" id="s-phase">—</div><div class="l">Current Phase</div></div>
+      <div class="stat"><div class="v" id="s-wait">0s</div><div class="l">Avg Wait / Car</div></div>
+      <div class="stat"><div class="v" id="s-cars">0</div><div class="l">Total Cars Processed</div></div>
+      <div class="stat"><div class="v" id="s-controller">AI</div><div class="l">Active Controller</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Live Weather Prediction — Regression Model</h2>
+    <p><small class="muted">Changes here call the trained XGBoost regression model (from <code>analysis/traffic_volume_prediction.py</code>) in real time, comparing predicted traffic volume under the selected weather against a clear/cloudy baseline. That predicted multiplier scales the simulation's traffic demand live — this is the ML model actually doing something while the system runs, not just a one-time offline chart.</small></p>
+    <div class="row" style="margin-top:12px;">
+      <button id="w-clear" onclick="setWeather('clear')">☀️ Clear</button>
+      <button id="w-clouds" onclick="setWeather('clouds')" class="active">☁️ Clouds</button>
+      <button id="w-rain" onclick="setWeather('rain')">🌧️ Rain</button>
+      <button id="w-snow" onclick="setWeather('snow')">❄️ Snow</button>
+    </div>
+    <div class="stat-grid" style="margin-top:14px;">
+      <div class="stat"><div class="v" id="s-weather">Clouds</div><div class="l">Current Weather</div></div>
+      <div class="stat"><div class="v" id="s-multiplier">1.00x</div><div class="l">Model-Predicted Demand Multiplier</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Security Layer — Sensor Data Validation</h2>
+    <p><small class="muted">Attack buttons send readings straight into the <b>live</b> intersection. With Security ON, every reading is checked (rule-based + Isolation Forest) before it's allowed to change the traffic light's view of the road — rejected readings never reach the controller. Toggle Security OFF to see what an attacker could actually do to the light with no validation layer in front of it.</small></p>
+
+    <div style="margin-top:12px;">
+      <div style="font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-bottom:6px;">NS sensor</div>
+      <div class="row attack-btns">
+        <button onclick="inject('normal','ns')">Send Normal Reading</button>
+        <button onclick="inject('spike','ns')">Attack: Spike</button>
+        <button onclick="inject('jump','ns')">Attack: Jump</button>
+        <button onclick="inject('flood','ns')">Attack: Flood</button>
+        <button onclick="inject('stealth','ns')">Attack: Stealth</button>
+      </div>
+    </div>
+
+    <div style="margin-top:14px;">
+      <div style="font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-bottom:6px;">EW sensor</div>
+      <div class="row attack-btns">
+        <button onclick="inject('normal','ew')">Send Normal Reading</button>
+        <button onclick="inject('spike','ew')">Attack: Spike</button>
+        <button onclick="inject('jump','ew')">Attack: Jump</button>
+        <button onclick="inject('flood','ew')">Attack: Flood</button>
+        <button onclick="inject('stealth','ew')">Attack: Stealth</button>
+      </div>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px;">
+      <span style="font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em;">Activity log</span>
+      <button onclick="clearSecurityLog()" style="font-size:12px; padding:4px 10px;">Clear log</button>
+    </div>
+    <div id="seclog"></div>
+  </div>
+
+  <div class="card" style="grid-column:1/-1;">
+    <h2>Efficiency Analysis — AI vs Fixed-Timer (offline evaluation, 30 episodes)</h2>
+    <div id="metrics-box">
+      <p><small class="muted">Loading trained metrics from results/metrics.json (produced by train.py)...</small></p>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const socket = io();
+let lastNsVal = 5;
+
+function setActiveBtn(name){
+  document.getElementById('btn-ai').classList.toggle('active', name==='ai');
+  document.getElementById('btn-fixed').classList.toggle('active', name==='fixed');
+}
+
+document.getElementById('btn-ai').onclick = () => setController('ai');
+document.getElementById('btn-fixed').onclick = () => setController('fixed');
+document.getElementById('btn-reset').onclick = () => fetch('/api/reset', {method:'POST'});
+document.getElementById('btn-pause').onclick = (e) => {
+  fetch('/api/pause', {method:'POST'}).then(r=>r.json()).then(d=>{
+    e.target.textContent = d.running ? 'Pause' : 'Resume';
+  });
+};
+
+document.getElementById('btn-security').onclick = (e) => {
+  fetch('/api/toggle_security', {method:'POST'}).then(r=>r.json()).then(d=>{
+    e.target.textContent = 'Security: ' + (d.security_enabled ? 'ON' : 'OFF');
+    e.target.classList.toggle('active', d.security_enabled);
+    e.target.style.background = d.security_enabled ? '' : 'var(--red)';
+    e.target.style.borderColor = d.security_enabled ? '' : 'var(--red)';
+  });
+};
+
+function setController(name){
+  fetch('/api/set_controller', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({controller:name})
+  }).then(()=> setActiveBtn(name));
+}
+
+function setWeather(name){
+  fetch('/api/set_weather', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({weather:name})
+  }).then(()=> {
+    ['clear','clouds','rain','snow'].forEach(w => {
+      document.getElementById('w-' + w).classList.toggle('active', w === name);
+    });
+  });
+}
+
+socket.on('sim_update', (d) => {
+  document.getElementById('s-queue-ns').textContent = d.queue_ns;
+  document.getElementById('s-queue-ew').textContent = d.queue_ew;
+  document.getElementById('s-phase').textContent = d.phase.replace('_',' ');
+  document.getElementById('s-wait').textContent = d.avg_wait_per_car + 's';
+  document.getElementById('s-cars').textContent = d.total_cars;
+  document.getElementById('s-controller').textContent = d.controller === 'ai' ? 'AI (Q-learning)' : 'Fixed-Timer';
+  document.getElementById('s-weather').textContent = d.weather.charAt(0).toUpperCase() + d.weather.slice(1);
+  document.getElementById('s-multiplier').textContent = d.weather_multiplier.toFixed(2) + 'x';
+
+  renderCars('cars-ns', d.queue_ns);
+  renderCars('cars-ew', d.queue_ew);
+
+  document.getElementById('light-ns').classList.toggle('on-ns', d.phase==='NS_GREEN');
+  document.getElementById('light-ew').classList.toggle('on-ew', d.phase==='EW_GREEN');
+});
+
+const MAX_VISIBLE_CARS = 12;
+function renderCars(containerId, count){
+  const el = document.getElementById(containerId);
+  el.innerHTML = '';
+  const shown = Math.min(count, MAX_VISIBLE_CARS);
+  for (let i = 0; i < shown; i++){
+    const car = document.createElement('div');
+    car.className = 'car-cell';
+    el.appendChild(car);
+  }
+  if (count > MAX_VISIBLE_CARS){
+    const label = document.createElement('span');
+    label.className = 'cars-overflow';
+    label.textContent = '+' + (count - MAX_VISIBLE_CARS);
+    el.appendChild(label);
+  }
+}
+
+let lastEwVal = 5;
+
+function inject(kind, sensorId){
+  const lastVal = sensorId === 'ns' ? lastNsVal : lastEwVal;
+  let value;
+  if (kind === 'normal'){ value = Math.max(0, Math.min(40, lastVal + (Math.random()>0.5?1:-1))); }
+  if (kind === 'spike'){ value = [-999, 999, 5000][Math.floor(Math.random()*3)]; }
+  if (kind === 'jump'){ value = Math.max(0, Math.min(40, lastVal + (Math.random()>0.5?30:-30))); }
+  if (kind === 'flood'){ value = lastVal; }
+  if (kind === 'stealth'){ value = Math.max(0, Math.min(40, lastVal + (Math.random()>0.5?9:-9))); }
+
+  if (sensorId === 'ns') { lastNsVal = value; } else { lastEwVal = value; }
+
+  fetch('/api/inject_reading', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({sensor_id:sensorId, value: value, label: kind})
+  });
+}
+
+function clearSecurityLog(){
+  fetch('/api/clear_security_log', {method:'POST'});
+  document.getElementById('seclog').innerHTML = '';
+}
+
+socket.on('security_log_cleared', () => {
+  document.getElementById('seclog').innerHTML = '';
+});
+
+socket.on('security_event', (e) => {
+  const box = document.getElementById('seclog');
+  const div = document.createElement('div');
+  div.className = 'entry' + (e.accepted ? '' : ' rej');
+  let badge;
+  if (e.applied) {
+    badge = '<span class="badge bad">APPLIED TO TRAFFIC</span>';
+  } else if (e.accepted) {
+    badge = '<span class="badge ok">ACCEPTED</span>';
+  } else {
+    badge = '<span class="badge ok">BLOCKED</span>';
+  }
+  const secTag = e.security_enabled ? '' : ' <small class="muted">(security OFF)</small>';
+  const headerRow = `<span>[${e.label}] ${e.sensor_id.toUpperCase()}=${e.value}${secTag}</span>${badge}`;
+  let reasonLine = '';
+  if (!e.accepted) {
+    const reason = (e.rule_reason !== 'ok') ? e.rule_reason : e.ml_reason;
+    reasonLine = `<span class="reason">Blocked: ${reason}</span>`;
+  }
+  div.innerHTML = `<div class="entry-row">${headerRow}</div>${reasonLine}`;
+  div.title = `rule: ${e.rule_reason} | ml: ${e.ml_reason}`;
+  box.prepend(div);
+  while (box.children.length > 30) box.removeChild(box.lastChild);
+});
+
+fetch('/api/metrics').then(r=>r.json()).then(m=>{
+  if (m.error) return;
+  document.getElementById('metrics-box').innerHTML = `
+    <div class="metric-compare">
+      <div class="col"><b>${m.agent_avg_wait_sec.toFixed(1)}s</b>AI avg wait/car</div>
+      <div class="col"><b>${m.baseline_avg_wait_sec.toFixed(1)}s</b>Fixed-timer avg wait/car</div>
+      <div class="col"><b>${m.wait_time_improvement_pct.toFixed(1)}%</b>Improvement</div>
+    </div>`;
+}).catch(()=>{});
+</script>
+
+</body>
+</html>

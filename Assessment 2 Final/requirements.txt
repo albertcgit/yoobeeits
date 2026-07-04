@@ -1,0 +1,8 @@
+flask
+flask-socketio
+numpy
+scikit-learn
+matplotlib
+xgboost
+pandas
+joblib
